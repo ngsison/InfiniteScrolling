@@ -37,40 +37,45 @@ struct ContentView: View {
     
     @State private var nextColorIndex: Int?
     @State private var nextColorOffset: CGFloat = 0
-    
-    @State private var smallColorsOffset: CGFloat = 0
-    
+        
     @State private var nextSmallColorIndex: Int?
-    @State private var nextSmallColorOffset: CGFloat = 0
+    @State private var smallColorsOffset: CGFloat = 0
     
     var body: some View {
         GeometryReader { geometry in
+            
+            let numberOfOnScreenScolors: CGFloat = 7
+            let numberOfOffScreenColors: CGFloat = 6
+            let numberOfBlocks: CGFloat = numberOfOnScreenScolors + 2
+                        
+            let screenWidth = geometry.size.width
+            let colorWidthNormal: CGFloat = screenWidth / numberOfBlocks
+            let colorWidthSelected: CGFloat = colorWidthNormal * 3
+            
+            let allColorsWidth: CGFloat = screenWidth + (numberOfOffScreenColors * colorWidthNormal)
+            let numberOfColorsForEachSide: CGFloat = 6
+            let defaultOffset = -(colorWidthNormal * numberOfColorsForEachSide / 2)
+            
             VStack {
                 // small colors
-                ZStack {
-                    let numberOfColors: CGFloat = 7
-                    let numberOfBlocks: CGFloat = numberOfColors + 2
-                    
-                    let unselectedColorWidth: CGFloat = geometry.size.width / numberOfBlocks
-                    let selectedColorWidth: CGFloat = unselectedColorWidth * 3
-                    
-                    if let nextSmallColorIndex {
-                        SmallColorView(color: colors[nextSmallColorIndex], width: unselectedColorWidth)
-                            .offset(x: nextColorOffset)
+                HStack(spacing: 0) {
+                    ForEach(getLeftIndices(baseIndex: selectedColorIndex, count: Int(numberOfColorsForEachSide)), id: \.self) { index in
+                        SmallColorView(color: colors[index], width: colorWidthNormal)
+                            .onTapGesture {
+                                nextColorIndex = index
+                            }
                     }
                     
-                    HStack(spacing: 0) {
-                        ForEach(getLeftIndices(baseIndex: selectedColorIndex), id: \.self) { index in
-                            SmallColorView(color: colors[index], width: unselectedColorWidth)
-                        }
-                        
-                        SmallColorView(color: colors[selectedColorIndex], width: selectedColorWidth)
-                        
-                        ForEach(getRightIndices(baseIndex: selectedColorIndex), id: \.self) { index in
-                            SmallColorView(color: colors[index], width: unselectedColorWidth)
-                        }
+                    SmallColorView(color: colors[selectedColorIndex], width: colorWidthSelected)
+                    
+                    ForEach(getRightIndices(baseIndex: selectedColorIndex, count: Int(numberOfColorsForEachSide)), id: \.self) { index in
+                        SmallColorView(color: colors[index], width: colorWidthNormal)
+                            .onTapGesture {
+                                nextColorIndex = index
+                            }
                     }
                 }
+                .offset(x: smallColorsOffset)
                 
                 // full colors
                 ZStack {
@@ -84,6 +89,8 @@ struct ContentView: View {
                 }
                 .frame(width: geometry.size.width)
             }
+            .frame(width: allColorsWidth)
+            .offset(x: defaultOffset)
             .gesture(
                 DragGesture()
                     .onEnded { gesture in
@@ -91,12 +98,12 @@ struct ContentView: View {
                     }
             )
             .onChange(of: nextColorIndex) {
-                handleNextColorChanged(using: geometry)
+                handleNextColorChanged(using: geometry, colorWidth: colorWidthNormal)
             }
         }
     }
     
-    private func getLeftIndices(baseIndex: Int, count: Int = 3) -> [Int] {
+    private func getLeftIndices(baseIndex: Int, count: Int) -> [Int] {
         (1...count)
             .reversed()
             .map { index in
@@ -104,7 +111,7 @@ struct ContentView: View {
             }
     }
     
-    private func getRightIndices(baseIndex: Int, count: Int = 3) -> [Int] {
+    private func getRightIndices(baseIndex: Int, count: Int) -> [Int] {
         (1...count)
             .map { index in
                 (colors.count + baseIndex + index) % colors.count
@@ -120,63 +127,92 @@ struct ContentView: View {
         }
     }
     
-    private func handleNextColorChanged(using geometry: GeometryProxy) {
+    private func handleNextColorChanged(using geometry: GeometryProxy, colorWidth: CGFloat) {
         guard let nextColorIndex else { return }
         
-        handleChangesToSmallColors(using: geometry)
+        handleChangesToSmallColors(using: geometry, colorWidth: colorWidth)
         handleChangesToFullColors(using: geometry)
         
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
             // update the data and reset to normal positon without animation
+            
             selectedColorIndex = nextColorIndex
             selectedColorOffset = 0
+            smallColorsOffset = 0
             
             self.nextColorIndex = nil
             self.nextSmallColorIndex = nil
         }
     }
     
-    private func handleChangesToSmallColors(using geometry: GeometryProxy) {
+    private func handleChangesToSmallColors(using geometry: GeometryProxy, colorWidth: CGFloat) {
         guard let nextColorIndex else { return }
+
+        let (nextColorWillStartFromLeft, distance) = isNextColorComingFromLeft(fromIndex: selectedColorIndex, toIndex: nextColorIndex)
         
-        // get the -3 or +3 index relative to nextColorIndex index -- is this even correct?
-        // don't forget big steps (tap on small colors)
+        let baseOffset = smallColorsOffset
+        let offsetAdjustment = CGFloat(distance) * colorWidth
         
+        withAnimation(.linear(duration: 0.35)) {
+            if nextColorWillStartFromLeft {
+                smallColorsOffset = baseOffset + offsetAdjustment
+            } else {
+                smallColorsOffset = baseOffset - offsetAdjustment
+            }
+        }
     }
     
     private func handleChangesToFullColors(using geometry: GeometryProxy) {
         guard let nextColorIndex else { return }
         
-        var nextColorWillStartFromLeft: Bool
+        let (nextColorWillStartFromLeft, _) = isNextColorComingFromLeft(fromIndex: selectedColorIndex, toIndex: nextColorIndex)
         
-        if selectedColorIndex == 0, nextColorIndex == colors.count - 1 {
-            // Transitioning from start to end
-            nextColorWillStartFromLeft = true
-        } else if selectedColorIndex == colors.count - 1, nextColorIndex == 0 {
-            // Transitioning from end to start
-            nextColorWillStartFromLeft = false
-        } else {
-            // Transitioning in the middle (normal transition)
-            nextColorWillStartFromLeft = nextColorIndex < selectedColorIndex
-        }
+        // MARK: Set initial positions without animation
         
-        // next color will start from left or right
+        // next color will start from left or right (off screen)
         nextColorOffset = nextColorWillStartFromLeft
-        ? -geometry.size.width // left
-        : geometry.size.width // right
+            ? -geometry.size.width // left
+            : geometry.size.width // right
         
-        // selected color will start from center
+        // selected color will start from center (on screen)
         selectedColorOffset = 0
         
+        // MARK: Set target positions with animation
+
         withAnimation(.linear(duration: 0.35)) {
-            // next color will move to center
+            // next color will move to center (on screen)
             nextColorOffset = 0
             
-            // selected color will move to left or right
+            // selected color will move to left or right (off screen)
             selectedColorOffset = nextColorWillStartFromLeft
-            ? geometry.size.width // right
-            : -geometry.size.width // left
+                ? geometry.size.width // right
+                : -geometry.size.width // left
         }
+    }
+    
+    private func isNextColorComingFromLeft(fromIndex: Int, toIndex: Int) -> (Bool, Int) {
+        let lastIndex = 20 - 1
+
+        // Check if transitioning from start to somewhere in the last three positions
+        if fromIndex == 0,
+           toIndex >= lastIndex - 2,
+           toIndex <= lastIndex {
+            let distance = lastIndex - toIndex + 1
+            return (true, distance)
+        }
+        
+        // Check if transitioning from end to somewhere in the first three positions
+        if fromIndex == lastIndex,
+           toIndex >= 0,
+           toIndex <= 2 {
+            let distance = toIndex + 1
+            return (false, distance)
+        }
+        
+        // Handle the normal transition in the middle
+        let isComingFromLeft = toIndex < fromIndex
+        let distance = abs(fromIndex.distance(to: toIndex))
+        return (isComingFromLeft, distance)
     }
 }
 
