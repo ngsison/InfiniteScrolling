@@ -37,9 +37,9 @@ struct ContentView: View {
     
     @State private var nextColorIndex: Int?
     @State private var nextColorOffset: CGFloat = 0
-        
-    @State private var nextSmallColorIndex: Int?
+    
     @State private var smallColorsOffset: CGFloat = 0
+    @State private var nextBigColorIndex: Int?
     
     var body: some View {
         GeometryReader { geometry in
@@ -47,7 +47,7 @@ struct ContentView: View {
             let numberOfOnScreenScolors: CGFloat = 7
             let numberOfOffScreenColors: CGFloat = 6
             let numberOfBlocks: CGFloat = numberOfOnScreenScolors + 2
-                        
+            
             let screenWidth = geometry.size.width
             let colorWidthNormal: CGFloat = screenWidth / numberOfBlocks
             let colorWidthSelected: CGFloat = colorWidthNormal * 3
@@ -60,16 +60,16 @@ struct ContentView: View {
                 // small colors
                 HStack(spacing: 0) {
                     ForEach(getLeftIndices(baseIndex: selectedColorIndex, count: Int(numberOfColorsForEachSide)), id: \.self) { index in
-                        SmallColorView(color: colors[index], width: colorWidthNormal)
+                        SmallColorView(color: colors[index], width: index == nextBigColorIndex ? colorWidthSelected : colorWidthNormal)
                             .onTapGesture {
                                 nextColorIndex = index
                             }
                     }
                     
-                    SmallColorView(color: colors[selectedColorIndex], width: colorWidthSelected)
+                    SmallColorView(color: colors[selectedColorIndex], width: nextBigColorIndex == nil ? colorWidthSelected : colorWidthNormal)
                     
                     ForEach(getRightIndices(baseIndex: selectedColorIndex, count: Int(numberOfColorsForEachSide)), id: \.self) { index in
-                        SmallColorView(color: colors[index], width: colorWidthNormal)
+                        SmallColorView(color: colors[index], width: index == nextBigColorIndex ? colorWidthSelected : colorWidthNormal)
                             .onTapGesture {
                                 nextColorIndex = index
                             }
@@ -128,32 +128,35 @@ struct ContentView: View {
     }
     
     private func handleNextColorChanged(using geometry: GeometryProxy, colorWidth: CGFloat) {
-        guard let nextColorIndex else { return }
+        guard let nextColorIndexCopy = nextColorIndex else { return }
         
         handleChangesToSmallColors(using: geometry, colorWidth: colorWidth)
         handleChangesToFullColors(using: geometry)
         
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
             // update the data and reset to normal positon without animation
-            
-            selectedColorIndex = nextColorIndex
+
+            selectedColorIndex = nextColorIndexCopy
             selectedColorOffset = 0
-            smallColorsOffset = 0
             
-            self.nextColorIndex = nil
-            self.nextSmallColorIndex = nil
+            nextColorOffset = 0
+            nextColorIndex = nil
+            
+            smallColorsOffset = 0
+            nextBigColorIndex = nil
         }
     }
     
     private func handleChangesToSmallColors(using geometry: GeometryProxy, colorWidth: CGFloat) {
         guard let nextColorIndex else { return }
-
+        
         let (nextColorWillStartFromLeft, distance) = isNextColorComingFromLeft(fromIndex: selectedColorIndex, toIndex: nextColorIndex)
         
         let baseOffset = smallColorsOffset
         let offsetAdjustment = CGFloat(distance) * colorWidth
         
         withAnimation(.linear(duration: 0.35)) {
+            nextBigColorIndex = nextColorIndex
             if nextColorWillStartFromLeft {
                 smallColorsOffset = baseOffset + offsetAdjustment
             } else {
@@ -171,41 +174,49 @@ struct ContentView: View {
         
         // next color will start from left or right (off screen)
         nextColorOffset = nextColorWillStartFromLeft
-            ? -geometry.size.width // left
-            : geometry.size.width // right
+        ? -geometry.size.width // left
+        : geometry.size.width // right
         
         // selected color will start from center (on screen)
         selectedColorOffset = 0
         
         // MARK: Set target positions with animation
-
+        
         withAnimation(.linear(duration: 0.35)) {
             // next color will move to center (on screen)
             nextColorOffset = 0
             
             // selected color will move to left or right (off screen)
             selectedColorOffset = nextColorWillStartFromLeft
-                ? geometry.size.width // right
-                : -geometry.size.width // left
+            ? geometry.size.width // right
+            : -geometry.size.width // left
         }
     }
     
     private func isNextColorComingFromLeft(fromIndex: Int, toIndex: Int) -> (Bool, Int) {
-        let lastIndex = 20 - 1
-
-        // Check if transitioning from start to somewhere in the last three positions
-        if fromIndex == 0,
+        let lastIndex = colors.count - 1
+        
+        // Check if transitioning from the first three positions to somewhere in the last three positions
+        if fromIndex >= 0,
+           fromIndex <= 2,
            toIndex >= lastIndex - 2,
            toIndex <= lastIndex {
-            let distance = lastIndex - toIndex + 1
+            
+            let distanceFromStartToEnd = fromIndex
+            let distanceToEndFromCurrent = lastIndex - toIndex
+            let distance = distanceFromStartToEnd + distanceToEndFromCurrent + 1
             return (true, distance)
         }
         
-        // Check if transitioning from end to somewhere in the first three positions
-        if fromIndex == lastIndex,
+        // Check if transitioning from the last three positions to somewhere in the first three positions
+        if fromIndex >= lastIndex - 2,
+           fromIndex <= lastIndex,
            toIndex >= 0,
            toIndex <= 2 {
-            let distance = toIndex + 1
+            
+            let distanceFromEndToStart = lastIndex - fromIndex
+            let distanceToStartFromCurrent = toIndex
+            let distance = distanceFromEndToStart + distanceToStartFromCurrent + 1
             return (false, distance)
         }
         
